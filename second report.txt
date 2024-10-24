@@ -1,0 +1,86 @@
+## Data Processing
+### 1.Data Description
+We are using data from 8 stations around Florida (Station id: 41008,41009, 41010, 42022, 42036, fwyf1, smkf1, venf1) from https://www.ndbc.noaa.gov/  ranging form 2006 to 2013. The datasets contain Date-Time columns (YY, MM, DD, hh, mm) and  Weather and the Oceanographic Measurements:
+- `WDIR` (Wind Direction, degrees): The direction from which the wind is blowing.
+- `WSPD` (Wind Speed, m/s): The speed of the wind.
+- `GST` (Gust Speed, m/s): The speed of the wind gusts.
+- `WVHT` (Wave Height, meters): Height of waves.
+- `DPD` (Dominant Wave Period, seconds): The period of the most dominant waves.
+- `APD` (Average Wave Period, seconds): The average period of waves).
+- `MWD` (Mean Wave Direction, degrees): The direction from which the waves are coming.
+- `PRES` (Pressure, hPa): Atmospheric pressure at the observation site.
+- `ATMP` (Air Temperature, °C): Air temperature at the observation site.
+- `WTMP` (Water Temperature, °C): Water temperature at the observation site.
+- `DEWP` (Dew Point Temperature, °C): The temperature at which air becomes saturated and produces dew.
+- `VIS` (Visibility, km): Horizontal visibility.
+- `TIDE` (Tide Height, meters): The height of the tide.
+
+### 2. Data Cleaning and Outlier Detection
+#### 2.1 Resampling
+Since the sampling intervals of the eight stations are inconsistent (the same station may also have inconsistent sampling intervals in different years), in order to facilitate the subsequent comparison of the similarity and prediction of these observational data, all of these data are first re-sampled as two-hourly and the year, month, day, hour, and minute fields are merged into the Data/Time field.
+
+#### 2.2 Calculating Similarity Matrix
+Calculating the similarity between data from different stations enables us to see how these data are related to each other, and making perdition of one place based on the data from these stations makes sense. We choose cosine similarity for these datasets for the following reasons:
+
+**Comparing Patterns Rather than Magnitudes**: The datasets have many attributes where the patterns of change are more meaningful than their absolute magnitudes.
+
+**Normalization of Data**: Cosine similarity normalizes the data by comparing the angle between vectors rather than their absolute values. This is useful when, in our case the variables have different ranges. It ensures that the similarity measure is not dominated by variables with larger numeric values but instead focuses on how the variables relate to one another.
+
+**Handling Missing Data**: All the datasets have missing values and cosine similarity can still be applied in a way that handles missing data gracefully, as it focuses on comparing the direction of the data vectors and can ignore dimensions with missing values, making it a robust choice when some data is unavailable.
+
+#### 2.3 Missing Value
+For each station, if the missing values are missing for less than six consecutive hours, then the mean value of these six hours is used to fill in the missing values, and if it is greater than six hours and less than 60 days, lightGBM is used for interpolation, and consecutive vacancies of more than 60 days are not processed, to ensure that, as far as possible, the inserted values do not destroy the original pattern of the data without introducing significant bias.
+
+Variables like wind speed, temperature, and pressure tend to change gradually within small time windows. Therefore, the mean of values within such as 6 hours is likely to be a reliable approximation of the missing values.
+
+LightGBM can capture complex patterns and relationships between different variables, which is useful when the missing data spans longer periods and the dynamics of the system may be more complex. For example, wind speed might depend not only on the time of day but also on other factors like temperature or pressure. A model like LightGBM can account for these dependencies and provide more accurate imputation than simpler methods like interpolation.
+
+By avoiding imputation for long-term gaps, we try to maintain the integrity of our dataset and avoid making unreliable assumptions. It also helps prevent the model or analysis from being skewed by artificial values that don't reflect actual patterns.
+
+#### 2.4 Outlier Detection
+We choose STL (Seasonal-Trend decomposition using LOESS) for outlier detection because the datasets we are using are time-series data and STL  is able to decompose time series into seasonal, trend and residual, helping us focus on true outliers, since the residual component isolates irregularities or unexpected behavior that cannot be explained by regular patterns (seasonal) or gradual changes (trend).
+
+We set 3.5 times the standard deviation of the residuals as the threshold for outliers, resulting in approximately 10% of the data being classified as outliers, which aligns with the typical frequency of extreme weather events.
+
+After labeling these extreme points, we will assign them higher weights in the training of the prediction model to improve its performance.
+
+#### 2.5 Dimensionality Reduction
+Convolutional Neural Networks (CNNs) are generally designed for grid-like structured data, such as images, but they can be adapted for feature extraction from tabular data, especially time-series data, because the rows of time-series data can be treated similarly to image pixels, where each time step corresponds to a "location" in the time domain, and each feature can be treated as different "channels" of data, much like the RGB channels in an image.
+
+CNNs can process multiple features simultaneously, learning interdependencies between the variables over time. They are also good at detecting local patterns, which can be crucial for time-series data where certain events (e.g., rapid changes in wind speed or temperature spikes) may occur within a short time frame. The filters are able to capture these short-term events effectively.
+
+## Model Updates
+### Models to Use
+We plan to use LSTM models to predict extreme temperature wave height in next one day because LSTMs are designed to capture temporal dependencies in sequences, making them suitable for time-series forecasting. 
+
+Since our 8 datasets are from the same region, instead of making prediction based solely on the data from a single observation point, by using cross-referenced location data, we extend the LSTM’s ability to learn these spatial dependencies and capture patterns that may not be apparent from one location alone but are critical when considering the regional weather dynamics.
+
+We want to train the model to predict the likelihood of extreme weather at all locations simultaneously, in other words, it's a multi-output forecasting model. During training process, we will assign different weights to records from different observation stations, giving more importance to stations with higher similarity and more weights to the outliers been detected before. 
+
+### Machine Learning Morphism
+#### 1. Data Acquisition
+- **Source**: Data is collected from 8 meteorological stations around Florida from NOAA (https://www.ndbc.noaa.gov/).
+- **Data Features**: Wind direction, wind speed, gust speed, wave height, atmospheric pressure, temperature (air and water), etc.
+
+#### 2. Data Pre-Processing
+- **Handling Inconsistencies**: Resample all data to two-hour intervals, ensuring consistent time steps.
+- **Outlier Detection**: Identify outliers and extreme points in the data, to be used in training.
+
+#### 3. Data Transformation
+- **Cosine Similarity Calculation**: Calculate the similarity between datasets from different stations using cosine similarity.
+- **Cross-Referencing Locations**: Combine data from all 8 stations to capture spatial dependencies.
+- **Weighting**: Assign higher weights to data from stations that are similar and to outliers.
+
+#### 4. Model Training
+- **LSTM Model**: Use a multi-output LSTM model to predict extreme weather events across all observation points.
+- **Input**: The input for each observation point includes data from all other stations (cross-referenced data).
+- **Weighted Training**: Apply different weights to records, with more weight given to data from stations with higher similarity and outliers.
+
+#### 5. Hyperparameter Tuning
+- **Tuning**: Optimize the hyperparameters of the LSTM model (e.g., number of layers, units, dropout rates).
+
+#### 6. Batch Inference
+- **Inference**: The LSTM model predicts extreme weather events across all stations simultaneously.
+
+#### 7. Model Evaluation
+- **Evaluation**: Assess the model's ability to predict extreme weather events, focusing on stations with higher weights.
